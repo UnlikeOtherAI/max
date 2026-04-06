@@ -1,6 +1,6 @@
 {
-  "name": "@unlikeotherai/max",
-  "version": "1.0.0",
+  "name": "minimax-claude-cli",
+  "version": "1.0.1",
   "description": "A CLI wrapper for Claude Code via MiniMax API",
   "bin": {
     "max": "./max"
