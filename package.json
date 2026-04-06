@@ -1,0 +1,26 @@
+{
+  "name": "@unlikeotherai/max",
+  "version": "1.0.0",
+  "description": "A CLI wrapper for Claude Code via MiniMax API",
+  "bin": {
+    "max": "./max"
+  },
+  "scripts": {
+    "postinstall": "chmod +x ./max"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/UnlikeOtherAI/max"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "minimax",
+    "cli"
+  ],
+  "author": "Unlike Other AI",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}
