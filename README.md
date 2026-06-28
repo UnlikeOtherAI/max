@@ -1,10 +1,10 @@
 # Max
 
-A CLI wrapper that routes Claude Code through multiple API-compatible endpoints:
+CLI wrappers that route Claude Code through multiple API-compatible endpoints:
 
-- **MiniMax** - [MiniMax API](https://www.minimaxi.com)
-- **Kimi** - [Moonshot AI](https://www.moonshot.cn)
-- **GLM** - [Z.ai](https://z.ai)
+- **max** - [MiniMax API](https://www.minimaxi.com)
+- **glm** - [Z.ai GLM](https://z.ai)
+- **klaude** - [Moonshot AI Kimi](https://www.moonshot.cn)
 
 Use Claude Code with your preferred API provider without modifying configuration each time.
 
@@ -15,7 +15,7 @@ Use Claude Code with your preferred API provider without modifying configuration
 
 ## Setup
 
-### 1. Install the binary
+### 1. Install the binaries
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/install.sh | bash
@@ -24,8 +24,17 @@ curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/install.sh |
 Or manually:
 
 ```bash
+# MiniMax
 curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/max -o ~/bin/max
 chmod +x ~/bin/max
+
+# GLM
+curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/glm -o ~/bin/glm
+chmod +x ~/bin/glm
+
+# Kimi (klaude)
+curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/klaude -o ~/bin/klaude
+chmod +x ~/bin/klaude
 ```
 
 Ensure `~/bin` is in your `$PATH`.
@@ -41,53 +50,51 @@ Ensure `~/bin` is in your `$PATH`.
 **Or use on first run** (interactive):
 
 ```bash
-max "your prompt"
+max "your prompt"    # MiniMax
+glm "your prompt"    # GLM
+klaude "your prompt" # Kimi
 ```
 
-Max will prompt you to enter your API key based on the provider you choose. The key is saved to `~/.max/token`.
+Each tool will prompt you to enter its API key if not set. Keys are saved to `~/.max/token`.
 
 ## Usage
 
-Max passes all arguments directly to Claude Code:
+Each CLI tool passes all arguments directly to Claude Code:
 
 ```bash
 max "refactor the auth module"
 max --print "what changed in the last commit"
 max --input "file.txt" "explain this"
-```
 
-**Choosing a provider:**
+glm "refactor the auth module"
+glm --print "what changed in the last commit"
+glm --input "file.txt" "explain this"
 
-```bash
-# Uses provider based on which API key is set
-max "your prompt"
-
-# Or specify provider directly (overrides env vars)
-max --provider minimax "your prompt"
-max --provider kimi "your prompt"
-max --provider glm "your prompt"
+klaude "refactor the auth module"
+klaude --print "what changed in the last commit"
+klaude --input "file.txt" "explain this"
 ```
 
 ## How it works
 
-Max sets environment variables before spawning Claude Code based on the chosen provider:
+Each CLI tool sets environment variables before spawning Claude Code:
 
-**MiniMax:**
+**max (MiniMax):**
 ```
 ANTHROPIC_BASE_URL=https://api.minimax.io/anthropic
 ANTHROPIC_AUTH_TOKEN=<your MINIMAX_API_KEY>
 ```
 
-**Kimi:**
-```
-ANTHROPIC_BASE_URL=https://api.moonshot.cn/anthropic
-ANTHROPIC_AUTH_TOKEN=<your KIMI_API_KEY>
-```
-
-**GLM:**
+**glm (Z.ai):**
 ```
 ANTHROPIC_BASE_URL=https://open.bigmodel.cn/api/paas/v4/anthropic
 ANTHROPIC_AUTH_TOKEN=<your GLM_API_KEY>
+```
+
+**klaude (Kimi/Moonshot AI):**
+```
+ANTHROPIC_BASE_URL=https://api.moonshot.cn/anthropic
+ANTHROPIC_AUTH_TOKEN=<your KIMI_API_KEY>
 ```
 
 Everything else — model selection, conversation history, tool use — is handled by Claude Code as usual.
