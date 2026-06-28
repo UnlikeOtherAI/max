@@ -1,0 +1,85 @@
+#!/usr/bin/env node
+const { spawn } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const CONFIG_DIR = path.join(os.homedir(), '.max');
+const TOKEN_FILE = path.join(CONFIG_DIR, 'token');
+
+function readToken() {
+  try {
+    return fs.readFileSync(TOKEN_FILE, 'utf8').trim();
+  } catch {
+    return null;
+  }
+}
+
+function saveToken(token) {
+  fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  fs.writeFileSync(TOKEN_FILE, token, { mode: 0o600 });
+}
+
+async function promptToken() {
+  const readline = require('readline');
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+
+  return new Promise((resolve) => {
+    rl.question('Enter your MiniMax API key: ', (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
+async function interactiveSetup() {
+  console.log('\n  Max — Claude Code via MiniMax API\n');
+  console.log('  No MINIMAX_API_KEY found.\n');
+  console.log('  Get your API key at: https://www.minimaxi.com/profile\n');
+  console.log('  Your key will be saved to ~/.max/token\n');
+
+  const token = await promptToken();
+  if (!token) {
+    console.error('No API key provided. Exiting.');
+    process.exit(1);
+  }
+
+  saveToken(token);
+  console.log('  API key saved to ~/.max/token\n');
+  return token;
+}
+
+async function main() {
+  let apiKey = process.env.MINIMAX_API_KEY || readToken();
+
+  if (!apiKey) {
+    apiKey = await interactiveSetup();
+  }
+
+  const env = { ...process.env };
+  env.ANTHROPIC_BASE_URL = 'https://api.minimax.io/anthropic';
+  env.ANTHROPIC_AUTH_TOKEN = apiKey;
+
+  const args = process.argv.slice(2);
+
+  const claude = spawn('claude', args, {
+    env,
+    stdio: 'inherit',
+    shell: false,
+  });
+
+  claude.on('error', (err) => {
+    if (err.code === 'ENOENT') {
+      console.error('Error: claude command not found. Is Claude Code CLI installed?');
+      process.exit(1);
+    }
+    console.error('Error:', err.message);
+    process.exit(1);
+  });
+
+  claude.on('exit', (code) => {
+    process.exit(code ?? 0);
+  });
+}
+
+main();
