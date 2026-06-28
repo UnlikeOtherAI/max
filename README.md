@@ -1,11 +1,17 @@
 # Max
 
-A CLI wrapper that routes Claude Code through the [MiniMax](https://www.minimaxi.com) API — so you can use Claude Code with any API-compatible endpoint.
+A CLI wrapper that routes Claude Code through multiple API-compatible endpoints:
+
+- **MiniMax** - [MiniMax API](https://www.minimaxi.com)
+- **Kimi** - [Moonshot AI](https://www.moonshot.cn)
+- **GLM** - [Z.ai](https://z.ai)
+
+Use Claude Code with your preferred API provider without modifying configuration each time.
 
 ## Requirements
 
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and in your PATH
-- A MiniMax API key
+- API key(s) for your chosen provider(s):
 
 ## Setup
 
@@ -24,21 +30,21 @@ chmod +x ~/bin/max
 
 Ensure `~/bin` is in your `$PATH`.
 
-### 2. Provide your API key
+### 2. Provide your API key(s)
 
-**First run** (interactive):
+**Choose your provider:**
+
+- **MiniMax**: `export MINIMAX_API_KEY=your_key_here`
+- **Kimi**: `export KIMI_API_KEY=your_key_here`
+- **GLM**: `export GLM_API_KEY=your_key_here`
+
+**Or use on first run** (interactive):
 
 ```bash
 max "your prompt"
 ```
 
-If no `MINIMAX_API_KEY` is set, Max will prompt you to enter it. The key is saved to `~/.max/token`.
-
-**Or** set it in your shell:
-
-```bash
-export MINIMAX_API_KEY=your_key_here
-```
+Max will prompt you to enter your API key based on the provider you choose. The key is saved to `~/.max/token`.
 
 ## Usage
 
@@ -50,13 +56,38 @@ max --print "what changed in the last commit"
 max --input "file.txt" "explain this"
 ```
 
+**Choosing a provider:**
+
+```bash
+# Uses provider based on which API key is set
+max "your prompt"
+
+# Or specify provider directly (overrides env vars)
+max --provider minimax "your prompt"
+max --provider kimi "your prompt"
+max --provider glm "your prompt"
+```
+
 ## How it works
 
-Max sets two environment variables before spawning Claude Code:
+Max sets environment variables before spawning Claude Code based on the chosen provider:
 
+**MiniMax:**
 ```
 ANTHROPIC_BASE_URL=https://api.minimax.io/anthropic
-ANTHROPIC_AUTH_TOKEN=<your API key>
+ANTHROPIC_AUTH_TOKEN=<your MINIMAX_API_KEY>
+```
+
+**Kimi:**
+```
+ANTHROPIC_BASE_URL=https://api.moonshot.cn/anthropic
+ANTHROPIC_AUTH_TOKEN=<your KIMI_API_KEY>
+```
+
+**GLM:**
+```
+ANTHROPIC_BASE_URL=https://open.bigmodel.cn/api/paas/v4/anthropic
+ANTHROPIC_AUTH_TOKEN=<your GLM_API_KEY>
 ```
 
 Everything else — model selection, conversation history, tool use — is handled by Claude Code as usual.
