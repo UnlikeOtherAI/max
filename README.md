@@ -24,17 +24,11 @@ curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/install.sh |
 Or manually:
 
 ```bash
-# MiniMax
+# Install all three
 curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/max -o ~/bin/max
-chmod +x ~/bin/max
-
-# GLM
 curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/glm -o ~/bin/glm
-chmod +x ~/bin/glm
-
-# Kimi (klaude)
 curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/klaude -o ~/bin/klaude
-chmod +x ~/bin/klaude
+chmod +x ~/bin/max ~/bin/glm ~/bin/klaude
 ```
 
 Ensure `~/bin` is in your `$PATH`.
@@ -44,18 +38,18 @@ Ensure `~/bin` is in your `$PATH`.
 **Choose your provider:**
 
 - **MiniMax**: `export MINIMAX_API_KEY=your_key_here`
-- **Kimi**: `export KIMI_API_KEY=your_key_here`
-- **GLM**: `export GLM_API_KEY=your_key_here`
+- **Kimi**: `export KIMI_CODING_API_KEY=your_key_here`
+- **GLM**: `export ZAI_CODING_PLAN_API_KEY=your_key_here`
 
 **Or use on first run** (interactive):
 
 ```bash
 max "your prompt"    # MiniMax
-glm "your prompt"    # GLM
-klaude "your prompt" # Kimi
 ```
 
-Each tool will prompt you to enter its API key if not set. Keys are saved to `~/.max/token`.
+If no `MINIMAX_API_KEY` is set, `max` will prompt you to enter it. The key is saved to `~/.max/token`.
+
+**Note:** `glm` and `klaude` require their respective environment variables to be set in your shell (they don't have interactive setup yet).
 
 ## Usage
 
@@ -87,17 +81,20 @@ ANTHROPIC_AUTH_TOKEN=<your MINIMAX_API_KEY>
 
 **glm (Z.ai):**
 ```
-ANTHROPIC_BASE_URL=https://open.bigmodel.cn/api/paas/v4/anthropic
-ANTHROPIC_AUTH_TOKEN=<your GLM_API_KEY>
+ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic
+ANTHROPIC_AUTH_TOKEN=<your ZAI_CODING_PLAN_API_KEY>
+ANTHROPIC_MODEL=glm-4.6
+ANTHROPIC_SMALL_FAST_MODEL=glm-4.5-air
 ```
 
 **klaude (Kimi/Moonshot AI):**
 ```
-ANTHROPIC_BASE_URL=https://api.moonshot.cn/anthropic
-ANTHROPIC_AUTH_TOKEN=<your KIMI_API_KEY>
+ANTHROPIC_BASE_URL=https://api.kimi.com/coding/
+ANTHROPIC_AUTH_TOKEN=<your KIMI_CODING_API_KEY>
+ANTHROPIC_MODEL=kimi-for-coding
 ```
 
-Everything else — model selection, conversation history, tool use — is handled by Claude Code as usual.
+Everything else — conversation history, tool use, etc. — is handled by Claude Code as usual.
 
 ## License
 

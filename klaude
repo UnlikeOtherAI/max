@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# klaude — launch Claude Code against Kimi for Coding (Moonshot, Anthropic-compatible API).
+# Token: $KIMI_CODING_API_KEY (set in ~/.zshrc)
+set -euo pipefail
+
+if [[ -z "${KIMI_CODING_API_KEY:-}" ]]; then
+  echo "klaude: KIMI_CODING_API_KEY is not set (expected in ~/.zshrc)." >&2
+  exit 1
+fi
+
+export ANTHROPIC_BASE_URL="https://api.kimi.com/coding/"
+export ANTHROPIC_AUTH_TOKEN="$KIMI_CODING_API_KEY"
+export ANTHROPIC_MODEL="${KIMI_MODEL:-kimi-for-coding}"
+export ANTHROPIC_SMALL_FAST_MODEL="$ANTHROPIC_MODEL"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="$ANTHROPIC_MODEL"
+# Avoid a stray real Anthropic key hijacking the routed endpoint.
+unset ANTHROPIC_API_KEY
+
+exec claude "$@"
