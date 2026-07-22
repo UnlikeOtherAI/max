@@ -1,17 +1,20 @@
 # Max
 
-CLI wrappers that route Claude Code through multiple API-compatible endpoints:
+CLI wrappers that route Claude Code / Codex through multiple API-compatible endpoints:
 
-- **max** - [MiniMax API](https://www.minimaxi.com)
-- **glm** - [Z.ai GLM](https://z.ai)
-- **klaude** - [Moonshot AI Kimi](https://www.moonshot.cn)
+- **max** - [MiniMax API](https://www.minimaxi.com) — routes Claude Code via Anthropic-compatible API
+- **glm** - [Z.ai GLM](https://z.ai) — routes Claude Code via Anthropic-compatible API
+- **klaude** - [Moonshot AI Kimi](https://www.moonshot.cn) — routes Claude Code via Anthropic-compatible API
+- **kimix** - [Kimi for Coding](https://kimi.moonshot.cn) (`k3`) — routes Codex CLI via a local proxy that translates Responses API ↔ Chat Completions
 
-Use Claude Code with your preferred API provider without modifying configuration each time.
+Use Claude Code or Codex with your preferred provider without modifying configuration each time.
 
 ## Requirements
 
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and in your PATH
-- API key(s) for your chosen provider(s):
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and in your PATH (for `max`, `glm`, `klaude`)
+- [Codex CLI](https://github.com/openai/codex) installed and in your PATH (for `kimix`)
+- Python 3 with `flask` and `requests` (for `kimix` proxy — installed automatically)
+- API key(s) for your chosen provider(s)
 
 ## Setup
 
@@ -24,36 +27,52 @@ curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/install.sh |
 Or manually:
 
 ```bash
-# Install all three
+# Install all four
 curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/max -o ~/bin/max
 curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/glm -o ~/bin/glm
 curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/klaude -o ~/bin/klaude
-chmod +x ~/bin/max ~/bin/glm ~/bin/klaude
+curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/kimix -o ~/bin/kimix
+curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/kimix-proxy -o ~/bin/kimix-proxy
+chmod +x ~/bin/max ~/bin/glm ~/bin/klaude ~/bin/kimix ~/bin/kimix-proxy
 ```
 
 Ensure `~/bin` is in your `$PATH`.
 
+### Additional setup for `kimix`
+
+`kimix` starts a local HTTP proxy (`kimix-proxy`) that translates the Codex Responses API to Kimi's Chat Completions API. This lets the upstream Codex binary run unmodified.
+
+One-time Python setup:
+```bash
+python3 -m venv ~/.kimix/venv
+~/.kimix/venv/bin/pip install flask requests
+```
+
+Save your API key:
+```bash
+mkdir -p ~/.kimix && echo "your_kimi_coding_api_key" > ~/.kimix/token && chmod 600 ~/.kimix/token
+```
+
+That's it — `kimix` handles everything else on first run.
+
 ### 2. Provide your API key(s)
 
-**Choose your provider:**
-
 - **MiniMax**: `export MINIMAX_API_KEY=your_key_here`
-- **Kimi**: `export KIMI_CODING_API_KEY=your_key_here`
+- **Kimi (klaude)**: `export KIMI_CODING_API_KEY=your_key_here`
+- **Kimi (kimix)**: `export KIMIX_API_KEY=your_key_here` or save to `~/.kimix/token`
 - **GLM**: `export ZAI_CODING_PLAN_API_KEY=your_key_here`
 
 **Or use on first run** (interactive):
 
 ```bash
-max "your prompt"    # MiniMax
+max "your prompt"    # MiniMax — prompts for key if not set, saves to ~/.max/token
 ```
 
-If no `MINIMAX_API_KEY` is set, `max` will prompt you to enter it. The key is saved to `~/.max/token`.
-
-**Note:** `glm` and `klaude` require their respective environment variables to be set in your shell (they don't have interactive setup yet).
+**Note:** `glm` and `klaude` require their respective environment variables to be set in your shell.
 
 ## Usage
 
-Each CLI tool passes all arguments directly to Claude Code:
+Each CLI tool passes all arguments directly to Claude Code or Codex:
 
 ```bash
 max "refactor the auth module"
@@ -67,6 +86,9 @@ glm --input "file.txt" "explain this"
 klaude "refactor the auth module"
 klaude --print "what changed in the last commit"
 klaude --input "file.txt" "explain this"
+
+kimix "refactor the auth module"
+kimix "what changed in the last commit"
 ```
 
 ## How it works
@@ -94,7 +116,15 @@ ANTHROPIC_AUTH_TOKEN=<your KIMI_CODING_API_KEY>
 ANTHROPIC_MODEL=kimi-for-coding
 ```
 
-Everything else — conversation history, tool use, etc. — is handled by Claude Code as usual.
+**kimix (Kimi K2 via Codex + proxy):**
+```
+KIMIX_API_KEY=<from $KIMIX_API_KEY or ~/.kimix/token>
+CODEX_HOME=~/.kimix/codex-proxy   (isolated config: kimi provider, k3 model)
+```
+
+`kimix` starts `kimix-proxy` on `http://127.0.0.1:8787` — a local Flask server that translates Codex's OpenAI Responses API requests to Kimi Chat Completions requests, and streams responses back in Responses API SSE format. Codex's `config.toml` points to the proxy as a custom provider with `wire_api = "responses"`. The proxy is shared across sessions and stays running in the background.
+
+Everything else — conversation history, tool use, etc. — is handled by the respective CLI as usual.
 
 ## License
 

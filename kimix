@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# kimix — launch Codex against Kimi for Coding via the kimix-proxy.
+# Token: $KIMIX_API_KEY or ~/.kimix/token
+set -euo pipefail
+
+TOKEN_FILE="$HOME/.kimix/token"
+
+if [[ -n "${KIMIX_API_KEY:-}" ]]; then
+  : # already set
+elif [[ -f "$TOKEN_FILE" ]]; then
+  KIMIX_API_KEY="$(< "$TOKEN_FILE")"
+else
+  echo "kimix: KIMIX_API_KEY is not set and $TOKEN_FILE not found." >&2
+  echo "       Set KIMIX_API_KEY in your environment, or run:" >&2
+  echo "       mkdir -p ~/.kimix && echo YOUR_KEY > ~/.kimix/token && chmod 600 ~/.kimix/token" >&2
+  exit 1
+fi
+
+export KIMIX_API_KEY
+
+PROXY_PORT="${KIMIX_PROXY_PORT:-8787}"
+PROXY_PID_FILE="$HOME/.kimix/proxy.pid"
+PROXY_LOG="$HOME/.kimix/proxy.log"
+PYTHON="${KIMIX_PYTHON:-$HOME/.kimix/venv/bin/python3}"
+[[ -x "$PYTHON" ]] || PYTHON=python3
+
+# Locate the proxy script alongside this binary
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROXY_SCRIPT="${KIMIX_PROXY_SCRIPT:-$SCRIPT_DIR/kimix-proxy}"
+
+# ---------------------------------------------------------------------------
+# Ensure proxy is running
+# ---------------------------------------------------------------------------
+proxy_running() {
+  local pid
+  [[ -f "$PROXY_PID_FILE" ]] || return 1
+  pid="$(< "$PROXY_PID_FILE")"
+  kill -0 "$pid" 2>/dev/null || return 1
+  curl -sf "http://127.0.0.1:${PROXY_PORT}/health" >/dev/null 2>&1
+}
+
+if ! proxy_running; then
+  mkdir -p "$(dirname "$PROXY_PID_FILE")"
+  KIMIX_BASE_URL="https://api.kimi.com/coding/v1" \
+  KIMIX_API_KEY="$KIMIX_API_KEY" \
+    "$PYTHON" "$PROXY_SCRIPT" --port "$PROXY_PORT" >"$PROXY_LOG" 2>&1 &
+  PROXY_PID=$!
+  echo "$PROXY_PID" > "$PROXY_PID_FILE"
+
+  # Wait for proxy to be ready (up to 5 s)
+  for i in $(seq 1 10); do
+    sleep 0.5
+    if curl -sf "http://127.0.0.1:${PROXY_PORT}/health" >/dev/null 2>&1; then
+      break
+    fi
+  done
+
+  # Final check — bail out with a helpful message if the proxy didn't start
+  if ! curl -sf "http://127.0.0.1:${PROXY_PORT}/health" >/dev/null 2>&1; then
+    echo "kimix: proxy failed to start on port ${PROXY_PORT}." >&2
+    echo "       Check $PROXY_LOG for details." >&2
+    exit 1
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Config: isolated CODEX_HOME pointing at proxy (regenerate if port changed)
+# ---------------------------------------------------------------------------
+export CODEX_HOME="${KIMIX_CODEX_HOME:-$HOME/.kimix/codex-proxy}"
+mkdir -p "$CODEX_HOME"
+
+CONFIG="$CODEX_HOME/config.toml"
+EXPECTED_BASE="http://127.0.0.1:${PROXY_PORT}/v1"
+
+# Regenerate if missing OR if port in file doesn't match current port
+if [[ ! -f "$CONFIG" ]] || ! grep -qF "$EXPECTED_BASE" "$CONFIG" 2>/dev/null; then
+  cat > "$CONFIG" <<TOML
+model = "k3"
+model_provider = "kimi"
+model_reasoning_effort = "high"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+
+[model_providers.kimi]
+name = "Kimi (via kimix-proxy)"
+base_url = "${EXPECTED_BASE}"
+env_key = "KIMIX_API_KEY"
+wire_api = "responses"
+
+[projects]
+TOML
+fi
+
+# Use stock upstream codex — no custom binary needed
+CODEX_BIN="${KIMIX_CODEX_BIN:-$(command -v codex 2>/dev/null || echo "$HOME/.local/bin/codex")}"
+
+exec "$CODEX_BIN" "$@"
