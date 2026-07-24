@@ -455,15 +455,35 @@ def convert_stream(chat_stream, resp_id):
         })
         return
 
-    # Build usage from Kimi's token counts
+    # Build usage from Kimi's token counts. Crucially, surface Kimi's
+    # automatic prefix-cache hits so Codex reports (and credits) them:
+    # Codex reads usage.input_tokens_details.cached_tokens from the
+    # response.completed event. Kimi reports cached tokens both at the top
+    # level (usage.cached_tokens) and under prompt_tokens_details.
     if usage:
+        prompt_details = usage.get("prompt_tokens_details") or {}
+        completion_details = usage.get("completion_tokens_details") or {}
+        cached = (
+            prompt_details.get("cached_tokens")
+            if prompt_details.get("cached_tokens") is not None
+            else usage.get("cached_tokens", 0)
+        ) or 0
+        reasoning = completion_details.get("reasoning_tokens", 0) or 0
         token_usage = {
             "input_tokens":  usage.get("prompt_tokens", 0),
+            "input_tokens_details": {"cached_tokens": cached},
             "output_tokens": usage.get("completion_tokens", 0),
+            "output_tokens_details": {"reasoning_tokens": reasoning},
             "total_tokens":  usage.get("total_tokens", 0),
         }
     else:
-        token_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        token_usage = {
+            "input_tokens": 0,
+            "input_tokens_details": {"cached_tokens": 0},
+            "output_tokens": 0,
+            "output_tokens_details": {"reasoning_tokens": 0},
+            "total_tokens": 0,
+        }
 
     yield from ensure_created()
     yield _sse_event("response.completed", {

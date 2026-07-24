@@ -82,9 +82,18 @@ CATALOG_SRC="$SCRIPT_DIR/k3-catalog.json"
 CATALOG_DEST="$CODEX_HOME/k3-catalog.json"
 [[ -f "$CATALOG_SRC" && ! -f "$CATALOG_DEST" ]] && cp "$CATALOG_SRC" "$CATALOG_DEST"
 
-# Regenerate if missing OR if port in file doesn't match current port
-if [[ ! -f "$CONFIG" ]] || ! grep -qF "$EXPECTED_BASE" "$CONFIG" 2>/dev/null; then
-  cat > "$CONFIG" <<TOML
+# Optional: cap the AGENTS.md/CLAUDE.md bytes Codex injects each session.
+# Kimi caches the stable prefix automatically, but a smaller prefix still cuts
+# the cold first turn and TPM pressure. Opt in with KIMIX_PROJECT_DOC_MAX_BYTES.
+DOC_CAP_LINE=""
+if [[ -n "${KIMIX_PROJECT_DOC_MAX_BYTES:-}" ]]; then
+  DOC_CAP_LINE="project_doc_max_bytes = ${KIMIX_PROJECT_DOC_MAX_BYTES}"
+fi
+
+# Always regenerate: the config is fully derived from this script + env, so
+# rewriting each run guarantees port/doc-cap changes take effect and prevents
+# stale hand-edits (e.g. a wrong model) from leaking into Kimi requests.
+cat > "$CONFIG" <<TOML
 model = "k3"
 model_provider = "kimi"
 model_reasoning_effort = "high"
@@ -92,6 +101,7 @@ approval_policy = "never"
 sandbox_mode = "danger-full-access"
 suppress_unstable_features_warning = true
 model_catalog_json = "$KIMIX_CODEX_HOME_ABS/k3-catalog.json"
+${DOC_CAP_LINE}
 
 [model_providers.kimi]
 name = "Kimi (via kimix-proxy)"
@@ -101,7 +111,6 @@ wire_api = "responses"
 
 [projects]
 TOML
-fi
 
 # Use stock upstream codex — no custom binary needed
 CODEX_BIN="${KIMIX_CODEX_BIN:-$(command -v codex 2>/dev/null || echo "$HOME/.local/bin/codex")}"
