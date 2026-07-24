@@ -18,6 +18,7 @@ Then point your kimix CODEX_HOME config at it:
 import argparse
 import json
 import sys
+import time
 import uuid
 import os
 
@@ -507,15 +508,42 @@ def responses():
         "Accept": "text/event-stream",
     }
 
-    try:
-        upstream = req_lib.post(url, json=chat_body, headers=headers,
-                                stream=True, timeout=300)
-    except Exception as exc:
-        return {"error": {"message": str(exc), "type": "connection_error"}}, 502
+    # Kimi's coding API rate-limits by tokens/min and concurrency. Agentic
+    # clients (codex exec) fire large uncached requests back-to-back, so a 429
+    # burst is normal operation, not failure: absorb it here with bounded
+    # backoff honoring Retry-After, instead of letting the client's short
+    # retry budget turn a throttle into a dead run.
+    retryable = {429, 500, 502, 503, 504}
+    max_attempts = int(os.environ.get("KIMIX_UPSTREAM_RETRIES", "5"))
+    upstream = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            upstream = req_lib.post(url, json=chat_body, headers=headers,
+                                    stream=True, timeout=300)
+        except Exception as exc:
+            return {"error": {"message": str(exc), "type": "connection_error"}}, 502
+        if upstream.status_code not in retryable or attempt == max_attempts:
+            break
+        retry_after = upstream.headers.get("Retry-After")
+        try:
+            delay = min(float(retry_after), 60.0) if retry_after else 0.0
+        except ValueError:
+            delay = 0.0
+        if delay <= 0.0:
+            delay = min(2.0 ** attempt, 30.0)
+        upstream.close()
+        print(f"kimix-proxy: upstream {upstream.status_code}, "
+              f"retry {attempt}/{max_attempts - 1} in {delay:.1f}s",
+              file=sys.stderr, flush=True)
+        time.sleep(delay)
 
     if not upstream.ok:
-        return Response(upstream.text, status=upstream.status_code,
+        resp = Response(upstream.text, status=upstream.status_code,
                         content_type="application/json")
+        retry_after = upstream.headers.get("Retry-After")
+        if retry_after:
+            resp.headers["Retry-After"] = retry_after
+        return resp
 
     def generate():
         yield from convert_stream(upstream, resp_id)
