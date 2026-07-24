@@ -41,10 +41,14 @@ proxy_running() {
 
 if ! proxy_running; then
   mkdir -p "$(dirname "$PROXY_PID_FILE")"
+  # Fully detach from the terminal (own session, no stdin) so the proxy
+  # can never interfere with codex's TUI escape-sequence handshake.
   KIMIX_BASE_URL="https://api.kimi.com/coding/v1" \
   KIMIX_API_KEY="$KIMIX_API_KEY" \
-    "$PYTHON" "$PROXY_SCRIPT" --port "$PROXY_PORT" >"$PROXY_LOG" 2>&1 &
+    nohup "$PYTHON" "$PROXY_SCRIPT" --port "$PROXY_PORT" \
+      </dev/null >"$PROXY_LOG" 2>&1 &
   PROXY_PID=$!
+  disown "$PROXY_PID" 2>/dev/null || true
   echo "$PROXY_PID" > "$PROXY_PID_FILE"
 
   # Wait for proxy to be ready (up to 5 s)
@@ -68,9 +72,15 @@ fi
 # ---------------------------------------------------------------------------
 export CODEX_HOME="${KIMIX_CODEX_HOME:-$HOME/.kimix/codex-proxy}"
 mkdir -p "$CODEX_HOME"
+KIMIX_CODEX_HOME_ABS="$(cd "$CODEX_HOME" && pwd)"
 
 CONFIG="$CODEX_HOME/config.toml"
 EXPECTED_BASE="http://127.0.0.1:${PROXY_PORT}/v1"
+
+# Seed the model catalog JSON alongside the config (idempotent)
+CATALOG_SRC="$SCRIPT_DIR/k3-catalog.json"
+CATALOG_DEST="$CODEX_HOME/k3-catalog.json"
+[[ -f "$CATALOG_SRC" && ! -f "$CATALOG_DEST" ]] && cp "$CATALOG_SRC" "$CATALOG_DEST"
 
 # Regenerate if missing OR if port in file doesn't match current port
 if [[ ! -f "$CONFIG" ]] || ! grep -qF "$EXPECTED_BASE" "$CONFIG" 2>/dev/null; then
@@ -80,6 +90,8 @@ model_provider = "kimi"
 model_reasoning_effort = "high"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
+suppress_unstable_features_warning = true
+model_catalog_json = "$KIMIX_CODEX_HOME_ABS/k3-catalog.json"
 
 [model_providers.kimi]
 name = "Kimi (via kimix-proxy)"
@@ -94,4 +106,7 @@ fi
 # Use stock upstream codex — no custom binary needed
 CODEX_BIN="${KIMIX_CODEX_BIN:-$(command -v codex 2>/dev/null || echo "$HOME/.local/bin/codex")}"
 
-exec "$CODEX_BIN" "$@"
+# Force -m k3 first so project-local configs (e.g. ~/.codex/config.toml when
+# running from ~) can't override the model. User-supplied -m in "$@" wins
+# because codex takes the last -m flag.
+exec "$CODEX_BIN" -m k3 "$@"
