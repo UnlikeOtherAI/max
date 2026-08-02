@@ -26,6 +26,8 @@ curl -fsSL "https://raw.githubusercontent.com/UnlikeOtherAI/max/main/kimix" -o "
 chmod +x "$INSTALL_DIR/kimix"
 curl -fsSL "https://raw.githubusercontent.com/UnlikeOtherAI/max/main/kimix-proxy" -o "$INSTALL_DIR/kimix-proxy"
 chmod +x "$INSTALL_DIR/kimix-proxy"
+# Model catalog — kimix reads it from alongside the kimix script
+curl -fsSL "https://raw.githubusercontent.com/UnlikeOtherAI/max/main/k3-catalog.json" -o "$INSTALL_DIR/k3-catalog.json"
 
 echo "Done. Run 'max --help', 'glm --help', 'klaude --help', or 'kimix --help' to get started."
 echo ""

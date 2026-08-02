@@ -5,7 +5,7 @@ CLI wrappers that route Claude Code / Codex through multiple API-compatible endp
 - **max** - [MiniMax API](https://www.minimaxi.com) — routes Claude Code via Anthropic-compatible API
 - **glm** - [Z.ai GLM](https://z.ai) — routes Claude Code via Anthropic-compatible API
 - **klaude** - [Moonshot AI Kimi](https://www.moonshot.cn) — routes Claude Code via Anthropic-compatible API
-- **kimix** - [Kimi for Coding](https://kimi.moonshot.cn) (`k3`) — routes Codex CLI via a local proxy that translates Responses API ↔ Chat Completions
+- **kimix** - [Kimi for Coding](https://kimi.moonshot.cn) (`k3-256k`) — routes Codex CLI via a local proxy that translates Responses API ↔ Chat Completions
 
 Use Claude Code or Codex with your preferred provider without modifying configuration each time.
 
@@ -33,8 +33,11 @@ curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/glm -o ~/bin
 curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/klaude -o ~/bin/klaude
 curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/kimix -o ~/bin/kimix
 curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/kimix-proxy -o ~/bin/kimix-proxy
+curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/k3-catalog.json -o ~/bin/k3-catalog.json
 chmod +x ~/bin/max ~/bin/glm ~/bin/klaude ~/bin/kimix ~/bin/kimix-proxy
 ```
+
+`k3-catalog.json` must sit next to the `kimix` script — that's where it picks up the model list.
 
 Ensure `~/bin` is in your `$PATH`.
 
@@ -91,6 +94,22 @@ kimix "refactor the auth module"
 kimix "what changed in the last commit"
 ```
 
+### Choosing a Kimi model
+
+`kimix` defaults to **`k3-256k`** — the same K3 model with a 256k context window. Plain `k3` is the full 1M-context variant and costs substantially more, so it's opt-in:
+
+```bash
+kimix -m k3 "trace this bug across the whole monorepo"
+```
+
+Or set it for a shell session:
+
+```bash
+export KIMIX_MODEL=k3
+```
+
+`kimi-for-coding` and `kimi-for-coding-highspeed` (K2.7, 256k) are also selectable the same way.
+
 ## How it works
 
 Each CLI tool sets environment variables before spawning Claude Code:
@@ -116,10 +135,11 @@ ANTHROPIC_AUTH_TOKEN=<your KIMI_CODING_API_KEY>
 ANTHROPIC_MODEL=kimi-for-coding
 ```
 
-**kimix (Kimi K2 via Codex + proxy):**
+**kimix (Kimi K3 via Codex + proxy):**
 ```
 KIMIX_API_KEY=<from $KIMIX_API_KEY or ~/.kimix/token>
-CODEX_HOME=~/.kimix/codex-proxy   (isolated config: kimi provider, k3 model)
+KIMIX_MODEL=k3-256k               (default; `k3` = 1M context, much pricier)
+CODEX_HOME=~/.kimix/codex-proxy   (isolated config: kimi provider, k3-256k model)
 ```
 
 `kimix` starts `kimix-proxy` on `http://127.0.0.1:8787` — a local Flask server that translates Codex's OpenAI Responses API requests to Kimi Chat Completions requests, and streams responses back in Responses API SSE format. Codex's `config.toml` points to the proxy as a custom provider with `wire_api = "responses"`. The proxy is shared across sessions and stays running in the background.

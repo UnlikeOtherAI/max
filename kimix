@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # kimix — launch Codex against Kimi for Coding via the kimix-proxy.
 # Token: $KIMIX_API_KEY or ~/.kimix/token
+# Model: $KIMIX_MODEL (default k3-256k); `kimix -m k3` for the 1M-context K3.
 set -euo pipefail
 
 TOKEN_FILE="$HOME/.kimix/token"
@@ -17,6 +18,10 @@ else
 fi
 
 export KIMIX_API_KEY
+
+# Default to k3-256k: same K3 model, 256k context, far cheaper than the
+# 1M-context `k3`. Override per run with KIMIX_MODEL=k3 or `kimix -m k3`.
+KIMIX_MODEL="${KIMIX_MODEL:-k3-256k}"
 
 PROXY_PORT="${KIMIX_PROXY_PORT:-8787}"
 PROXY_PID_FILE="$HOME/.kimix/proxy.pid"
@@ -77,10 +82,20 @@ KIMIX_CODEX_HOME_ABS="$(cd "$CODEX_HOME" && pwd)"
 CONFIG="$CODEX_HOME/config.toml"
 EXPECTED_BASE="http://127.0.0.1:${PROXY_PORT}/v1"
 
-# Seed the model catalog JSON alongside the config (idempotent)
+# Refresh the model catalog JSON alongside the config. Like the config below
+# it is fully derived from the repo, so copy it every run — otherwise an
+# existing install keeps a stale catalog (wrong context windows, missing
+# models) forever. Codex rejects a config pointing at a missing catalog, so
+# only reference it when we actually have one.
 CATALOG_SRC="$SCRIPT_DIR/k3-catalog.json"
 CATALOG_DEST="$CODEX_HOME/k3-catalog.json"
-[[ -f "$CATALOG_SRC" && ! -f "$CATALOG_DEST" ]] && cp "$CATALOG_SRC" "$CATALOG_DEST"
+CATALOG_LINE=""
+if [[ -f "$CATALOG_SRC" ]]; then
+  cp "$CATALOG_SRC" "$CATALOG_DEST"
+fi
+if [[ -f "$CATALOG_DEST" ]]; then
+  CATALOG_LINE="model_catalog_json = \"$KIMIX_CODEX_HOME_ABS/k3-catalog.json\""
+fi
 
 # Optional: cap the AGENTS.md/CLAUDE.md bytes Codex injects each session.
 # Kimi caches the stable prefix automatically, but a smaller prefix still cuts
@@ -94,13 +109,13 @@ fi
 # rewriting each run guarantees port/doc-cap changes take effect and prevents
 # stale hand-edits (e.g. a wrong model) from leaking into Kimi requests.
 cat > "$CONFIG" <<TOML
-model = "k3"
+model = "${KIMIX_MODEL}"
 model_provider = "kimi"
 model_reasoning_effort = "high"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
 suppress_unstable_features_warning = true
-model_catalog_json = "$KIMIX_CODEX_HOME_ABS/k3-catalog.json"
+${CATALOG_LINE}
 ${DOC_CAP_LINE}
 
 [model_providers.kimi]
@@ -115,7 +130,18 @@ TOML
 # Use stock upstream codex — no custom binary needed
 CODEX_BIN="${KIMIX_CODEX_BIN:-$(command -v codex 2>/dev/null || echo "$HOME/.local/bin/codex")}"
 
-# Force -m k3 first so project-local configs (e.g. ~/.codex/config.toml when
-# running from ~) can't override the model. User-supplied -m in "$@" wins
-# because codex takes the last -m flag.
-exec "$CODEX_BIN" -m k3 "$@"
+# Force the model explicitly so project-local configs (e.g. ~/.codex/config.toml
+# when running from ~) can't override it — but only when the user didn't pick
+# one themselves: codex rejects a repeated --model rather than taking the last
+# one, so injecting unconditionally would break `kimix -m k3`.
+USER_MODEL=0
+for arg in "$@"; do
+  case "$arg" in
+    -m|--model|-m?*|--model=*) USER_MODEL=1; break ;;
+  esac
+done
+
+if (( USER_MODEL )); then
+  exec "$CODEX_BIN" "$@"
+fi
+exec "$CODEX_BIN" -m "$KIMIX_MODEL" "$@"
