@@ -141,6 +141,20 @@ for arg in "$@"; do
   esac
 done
 
+# Codex treats a non-TTY stdin as *additional* prompt input and announces
+# "Reading additional input from stdin...". In a non-interactive context — CI, a
+# backgrounded job, an agent harness — stdin is usually an inherited descriptor
+# that never delivers data and never reaches EOF, so codex blocks there forever:
+# no output, no work, no error, and the run has to be killed. The prompt passed
+# as an argument is never even looked at.
+#
+# Default to /dev/null whenever stdin is not a terminal, which is what every
+# automated caller wants. To pipe a prompt in deliberately, opt back in:
+#   echo "review this" | KIMIX_STDIN=1 kimix exec
+if [[ -z "${KIMIX_STDIN:-}" && ! -t 0 ]]; then
+  exec 0</dev/null
+fi
+
 if (( USER_MODEL )); then
   exec "$CODEX_BIN" "$@"
 fi
