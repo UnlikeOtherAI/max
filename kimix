@@ -105,6 +105,22 @@ if [[ -n "${KIMIX_PROJECT_DOC_MAX_BYTES:-}" ]]; then
   DOC_CAP_LINE="project_doc_max_bytes = ${KIMIX_PROJECT_DOC_MAX_BYTES}"
 fi
 
+# codex exec has no TUI compaction loop: interactive codex watches token usage
+# and folds old turns as it goes, but `codex exec` runs straight through, and a
+# single large tool result (a full diff, a compiler log, a long grep) can flood
+# the context well past the model's real limit before anything evaluates
+# whether to compact. Left to its own defaults codex assumes a ~258k window,
+# which collides with Kimi's real 256k ceiling — the run then hits the
+# provider's hard limit, the pipeline swallows the failure, and codex exits 0
+# having done partial or no work. `model_context_window` states the real
+# ceiling explicitly for this custom provider (codex cannot infer it from a
+# third-party endpoint), and `model_auto_compact_token_limit` sets the
+# compaction trigger a firm 10% under it so there is always room left to
+# summarize before the hard limit hits. Scale both if KIMIX_MODEL=k3 (1M
+# context) is selected instead of the 256k default.
+KIMIX_CONTEXT_WINDOW="${KIMIX_MODEL_CONTEXT_WINDOW:-256000}"
+KIMIX_AUTO_COMPACT_LIMIT="${KIMIX_AUTO_COMPACT_TOKEN_LIMIT:-230000}"
+
 # Always regenerate: the config is fully derived from this script + env, so
 # rewriting each run guarantees port/doc-cap changes take effect and prevents
 # stale hand-edits (e.g. a wrong model) from leaking into Kimi requests.
@@ -115,6 +131,8 @@ model_reasoning_effort = "high"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
 suppress_unstable_features_warning = true
+model_context_window = ${KIMIX_CONTEXT_WINDOW}
+model_auto_compact_token_limit = ${KIMIX_AUTO_COMPACT_LIMIT}
 ${CATALOG_LINE}
 ${DOC_CAP_LINE}
 
@@ -123,6 +141,12 @@ name = "Kimi (via kimix-proxy)"
 base_url = "${EXPECTED_BASE}"
 env_key = "KIMIX_API_KEY"
 wire_api = "responses"
+
+[tools.unified_exec]
+# Truncate a single tool result (a huge diff, a flooded compiler log) before
+# it alone can exhaust the context in one shot — the failure mode this whole
+# block exists to prevent.
+default_max_output_tokens = 4000
 
 [projects]
 TOML
@@ -151,11 +175,56 @@ done
 # Default to /dev/null whenever stdin is not a terminal, which is what every
 # automated caller wants. To pipe a prompt in deliberately, opt back in:
 #   echo "review this" | KIMIX_STDIN=1 kimix exec
+AUTOMATION=0
 if [[ -z "${KIMIX_STDIN:-}" && ! -t 0 ]]; then
   exec 0</dev/null
+  AUTOMATION=1
 fi
 
+# Direct -c overrides on top of the generated config.toml — belt and
+# suspenders for the same context-window fix above. `codex exec` has been
+# observed to apply its own internal default ahead of a written config in some
+# builds, so state the limits on the command line too rather than trusting the
+# file alone.
+CODEX_ARGS=(
+  -c "model_context_window=${KIMIX_CONTEXT_WINDOW}"
+  -c "model_auto_compact_token_limit=${KIMIX_AUTO_COMPACT_LIMIT}"
+)
 if (( USER_MODEL )); then
-  exec "$CODEX_BIN" "$@"
+  CODEX_ARGS=("$CODEX_BIN" "${CODEX_ARGS[@]}" "$@")
+else
+  CODEX_ARGS=("$CODEX_BIN" -m "$KIMIX_MODEL" "${CODEX_ARGS[@]}" "$@")
 fi
-exec "$CODEX_BIN" -m "$KIMIX_MODEL" "$@"
+
+# Interactive use (a real TTY, or KIMIX_STDIN=1 piping a prompt in
+# deliberately) keeps the direct `exec` process-replacement — codex owns the
+# terminal, streams live, and this script must not sit in the way. Automation
+# calls (non-tty stdin: CI, a background job, an agent harness — which is
+# every caller that hit the silent-truncation bug this file exists to fix)
+# instead run codex as a child so the output can be inspected: codex's own
+# lifecycle, even with the limits above, has been observed to swallow a
+# context-exhaustion failure and still exit 0 — the exact "ran the task
+# apparently to completion but did nothing" failure that makes an automated
+# caller trust a false success. Grep the captured output for the known
+# upstream phrasing and force a real failure exit when it's there.
+if (( ! AUTOMATION )); then
+  exec "${CODEX_ARGS[@]}"
+fi
+
+OUTPUT_FILE="$(mktemp)"
+trap 'rm -f "$OUTPUT_FILE"' EXIT
+# Merge stderr into the same stream so one `tee` sees everything (two
+# processes teeing to one file would race); PIPESTATUS[0] recovers codex's
+# real exit code from the left side of the pipe, and `set -e` is suspended
+# around the pipeline itself so a non-zero codex exit doesn't abort this
+# script before that code is captured.
+set +e
+"${CODEX_ARGS[@]}" 2>&1 | tee "$OUTPUT_FILE"
+CODEX_EXIT="${PIPESTATUS[0]}"
+set -e
+
+if grep -qiE 'ran out of room|context window|context_length_exceeded|maximum context length' "$OUTPUT_FILE"; then
+  echo "kimix: codex reported a context-window failure but may have exited 0 — treating this run as failed." >&2
+  exit 1
+fi
+exit "$CODEX_EXIT"
