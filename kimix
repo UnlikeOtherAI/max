@@ -1,129 +1,52 @@
 #!/usr/bin/env bash
-# kimix — launch Codex against Kimi for Coding via the kimix-proxy.
-# Token: $KIMIX_API_KEY or ~/.kimix/token
-# Model: $KIMIX_MODEL (default k3-256k); `kimix -m k3` for the 1M-context K3.
+# kimix — launch Codex directly against Kimi's native Responses API.
+# API key: $KIMI_API_KEY (the documented name); $KIMIX_API_KEY remains a
+# backwards-compatible alias. Model: $KIMIX_MODEL (default: kimi-k3).
 set -euo pipefail
 
-TOKEN_FILE="$HOME/.kimix/token"
+TOKEN_FILE="${KIMIX_TOKEN_FILE:-$HOME/.kimix/token}"
 
-if [[ -n "${KIMIX_API_KEY:-}" ]]; then
-  : # already set
+# Kimi's Codex integration expects KIMI_API_KEY. Accept the older wrapper
+# variable and token-file setup so upgrading kimix does not require users to
+# rotate or re-save their API keys.
+if [[ -n "${KIMI_API_KEY:-}" ]]; then
+  : # documented variable already set
+elif [[ -n "${KIMIX_API_KEY:-}" ]]; then
+  KIMI_API_KEY="$KIMIX_API_KEY"
 elif [[ -f "$TOKEN_FILE" ]]; then
-  KIMIX_API_KEY="$(< "$TOKEN_FILE")"
+  KIMI_API_KEY="$(< "$TOKEN_FILE")"
 else
-  echo "kimix: KIMIX_API_KEY is not set and $TOKEN_FILE not found." >&2
-  echo "       Set KIMIX_API_KEY in your environment, or run:" >&2
-  echo "       mkdir -p ~/.kimix && echo YOUR_KEY > ~/.kimix/token && chmod 600 ~/.kimix/token" >&2
+  echo "kimix: KIMI_API_KEY is not set and $TOKEN_FILE was not found." >&2
+  echo "       Set KIMI_API_KEY (recommended), or KIMIX_API_KEY for compatibility." >&2
   exit 1
 fi
+export KIMI_API_KEY
 
-export KIMIX_API_KEY
+# Kimi's native Codex integration is the 1M-context kimi-k3 model. A caller
+# that deliberately selects a different model can supply its own window and
+# compaction limits through the KIMIX_* overrides below.
+KIMIX_MODEL="${KIMIX_MODEL:-kimi-k3}"
+KIMIX_CONTEXT_WINDOW="${KIMIX_MODEL_CONTEXT_WINDOW:-1048576}"
+KIMIX_AUTO_COMPACT_LIMIT="${KIMIX_AUTO_COMPACT_TOKEN_LIMIT:-943718}"
 
-# Default to k3-256k: same K3 model, 256k context, far cheaper than the
-# 1M-context `k3`. Override per run with KIMIX_MODEL=k3 or `kimix -m k3`.
-KIMIX_MODEL="${KIMIX_MODEL:-k3-256k}"
-
-PROXY_PORT="${KIMIX_PROXY_PORT:-8787}"
-PROXY_PID_FILE="$HOME/.kimix/proxy.pid"
-PROXY_LOG="$HOME/.kimix/proxy.log"
-PYTHON="${KIMIX_PYTHON:-$HOME/.kimix/venv/bin/python3}"
-[[ -x "$PYTHON" ]] || PYTHON=python3
-
-# Locate the proxy script alongside this binary
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROXY_SCRIPT="${KIMIX_PROXY_SCRIPT:-$SCRIPT_DIR/kimix-proxy}"
-
-# ---------------------------------------------------------------------------
-# Ensure proxy is running
-# ---------------------------------------------------------------------------
-proxy_running() {
-  local pid
-  [[ -f "$PROXY_PID_FILE" ]] || return 1
-  pid="$(< "$PROXY_PID_FILE")"
-  kill -0 "$pid" 2>/dev/null || return 1
-  curl -sf "http://127.0.0.1:${PROXY_PORT}/health" >/dev/null 2>&1
-}
-
-if ! proxy_running; then
-  mkdir -p "$(dirname "$PROXY_PID_FILE")"
-  # Fully detach from the terminal (own session, no stdin) so the proxy
-  # can never interfere with codex's TUI escape-sequence handshake.
-  KIMIX_BASE_URL="https://api.kimi.com/coding/v1" \
-  KIMIX_API_KEY="$KIMIX_API_KEY" \
-    nohup "$PYTHON" "$PROXY_SCRIPT" --port "$PROXY_PORT" \
-      </dev/null >"$PROXY_LOG" 2>&1 &
-  PROXY_PID=$!
-  disown "$PROXY_PID" 2>/dev/null || true
-  echo "$PROXY_PID" > "$PROXY_PID_FILE"
-
-  # Wait for proxy to be ready (up to 5 s)
-  for i in $(seq 1 10); do
-    sleep 0.5
-    if curl -sf "http://127.0.0.1:${PROXY_PORT}/health" >/dev/null 2>&1; then
-      break
-    fi
-  done
-
-  # Final check — bail out with a helpful message if the proxy didn't start
-  if ! curl -sf "http://127.0.0.1:${PROXY_PORT}/health" >/dev/null 2>&1; then
-    echo "kimix: proxy failed to start on port ${PROXY_PORT}." >&2
-    echo "       Check $PROXY_LOG for details." >&2
-    exit 1
-  fi
-fi
-
-# ---------------------------------------------------------------------------
-# Config: isolated CODEX_HOME pointing at proxy (regenerate if port changed)
-# ---------------------------------------------------------------------------
-export CODEX_HOME="${KIMIX_CODEX_HOME:-$HOME/.kimix/codex-proxy}"
+# Keep Kimi configuration isolated from the user's normal Codex profile. The
+# previous proxy-backed path used ~/.kimix/codex-proxy; a new directory avoids
+# accidentally retaining its localhost endpoint after an upgrade.
+export CODEX_HOME="${KIMIX_CODEX_HOME:-$HOME/.kimix/codex}"
 mkdir -p "$CODEX_HOME"
-KIMIX_CODEX_HOME_ABS="$(cd "$CODEX_HOME" && pwd)"
-
 CONFIG="$CODEX_HOME/config.toml"
-EXPECTED_BASE="http://127.0.0.1:${PROXY_PORT}/v1"
 
-# Refresh the model catalog JSON alongside the config. Like the config below
-# it is fully derived from the repo, so copy it every run — otherwise an
-# existing install keeps a stale catalog (wrong context windows, missing
-# models) forever. Codex rejects a config pointing at a missing catalog, so
-# only reference it when we actually have one.
-CATALOG_SRC="$SCRIPT_DIR/k3-catalog.json"
-CATALOG_DEST="$CODEX_HOME/k3-catalog.json"
-CATALOG_LINE=""
-if [[ -f "$CATALOG_SRC" ]]; then
-  cp "$CATALOG_SRC" "$CATALOG_DEST"
-fi
-if [[ -f "$CATALOG_DEST" ]]; then
-  CATALOG_LINE="model_catalog_json = \"$KIMIX_CODEX_HOME_ABS/k3-catalog.json\""
-fi
-
-# Optional: cap the AGENTS.md/CLAUDE.md bytes Codex injects each session.
-# Kimi caches the stable prefix automatically, but a smaller prefix still cuts
-# the cold first turn and TPM pressure. Opt in with KIMIX_PROJECT_DOC_MAX_BYTES.
+# Optional: cap AGENTS.md/CLAUDE.md bytes injected by Codex for a session.
 DOC_CAP_LINE=""
 if [[ -n "${KIMIX_PROJECT_DOC_MAX_BYTES:-}" ]]; then
   DOC_CAP_LINE="project_doc_max_bytes = ${KIMIX_PROJECT_DOC_MAX_BYTES}"
 fi
 
-# codex exec has no TUI compaction loop: interactive codex watches token usage
-# and folds old turns as it goes, but `codex exec` runs straight through, and a
-# single large tool result (a full diff, a compiler log, a long grep) can flood
-# the context well past the model's real limit before anything evaluates
-# whether to compact. Left to its own defaults codex assumes a ~258k window,
-# which collides with Kimi's real 256k ceiling — the run then hits the
-# provider's hard limit, the pipeline swallows the failure, and codex exits 0
-# having done partial or no work. `model_context_window` states the real
-# ceiling explicitly for this custom provider (codex cannot infer it from a
-# third-party endpoint), and `model_auto_compact_token_limit` sets the
-# compaction trigger a firm 10% under it so there is always room left to
-# summarize before the hard limit hits. Scale both if KIMIX_MODEL=k3 (1M
-# context) is selected instead of the 256k default.
-KIMIX_CONTEXT_WINDOW="${KIMIX_MODEL_CONTEXT_WINDOW:-256000}"
-KIMIX_AUTO_COMPACT_LIMIT="${KIMIX_AUTO_COMPACT_TOKEN_LIMIT:-230000}"
-
-# Always regenerate: the config is fully derived from this script + env, so
-# rewriting each run guarantees port/doc-cap changes take effect and prevents
-# stale hand-edits (e.g. a wrong model) from leaking into Kimi requests.
+# Kimi natively implements the Responses API used by Codex. Using it directly
+# preserves the complete event protocol, including compaction and tool-call
+# continuation, instead of translating it through a local Chat Completions
+# proxy. Regenerate this derived config on every invocation so upgrades take
+# effect immediately.
 cat > "$CONFIG" <<TOML
 model = "${KIMIX_MODEL}"
 model_provider = "kimi"
@@ -133,31 +56,24 @@ sandbox_mode = "danger-full-access"
 suppress_unstable_features_warning = true
 model_context_window = ${KIMIX_CONTEXT_WINDOW}
 model_auto_compact_token_limit = ${KIMIX_AUTO_COMPACT_LIMIT}
-${CATALOG_LINE}
 ${DOC_CAP_LINE}
 
 [model_providers.kimi]
-name = "Kimi (via kimix-proxy)"
-base_url = "${EXPECTED_BASE}"
-env_key = "KIMIX_API_KEY"
+name = "Kimi"
+base_url = "https://api.moonshot.ai/v1"
+env_key = "KIMI_API_KEY"
 wire_api = "responses"
 
 [tools.unified_exec]
-# Truncate a single tool result (a huge diff, a flooded compiler log) before
-# it alone can exhaust the context in one shot — the failure mode this whole
-# block exists to prevent.
 default_max_output_tokens = 4000
 
 [projects]
 TOML
 
-# Use stock upstream codex — no custom binary needed
 CODEX_BIN="${KIMIX_CODEX_BIN:-$(command -v codex 2>/dev/null || echo "$HOME/.local/bin/codex")}"
 
-# Force the model explicitly so project-local configs (e.g. ~/.codex/config.toml
-# when running from ~) can't override it — but only when the user didn't pick
-# one themselves: codex rejects a repeated --model rather than taking the last
-# one, so injecting unconditionally would break `kimix -m k3`.
+# Explicit user model flags take precedence. Codex rejects repeated --model
+# flags, so only provide our default when the caller has not selected one.
 USER_MODEL=0
 for arg in "$@"; do
   case "$arg" in
@@ -165,27 +81,15 @@ for arg in "$@"; do
   esac
 done
 
-# Codex treats a non-TTY stdin as *additional* prompt input and announces
-# "Reading additional input from stdin...". In a non-interactive context — CI, a
-# backgrounded job, an agent harness — stdin is usually an inherited descriptor
-# that never delivers data and never reaches EOF, so codex blocks there forever:
-# no output, no work, no error, and the run has to be killed. The prompt passed
-# as an argument is never even looked at.
-#
-# Default to /dev/null whenever stdin is not a terminal, which is what every
-# automated caller wants. To pipe a prompt in deliberately, opt back in:
-#   echo "review this" | KIMIX_STDIN=1 kimix exec
+# A non-terminal stdin is normally an inherited descriptor in automation, not
+# prompt text. Point it at /dev/null so Codex does not wait indefinitely for
+# additional input. Set KIMIX_STDIN=1 to intentionally pipe a prompt.
 AUTOMATION=0
 if [[ -z "${KIMIX_STDIN:-}" && ! -t 0 ]]; then
   exec 0</dev/null
   AUTOMATION=1
 fi
 
-# Direct -c overrides on top of the generated config.toml — belt and
-# suspenders for the same context-window fix above. `codex exec` has been
-# observed to apply its own internal default ahead of a written config in some
-# builds, so state the limits on the command line too rather than trusting the
-# file alone.
 CODEX_ARGS=(
   -c "model_context_window=${KIMIX_CONTEXT_WINDOW}"
   -c "model_auto_compact_token_limit=${KIMIX_AUTO_COMPACT_LIMIT}"
@@ -196,34 +100,21 @@ else
   CODEX_ARGS=("$CODEX_BIN" -m "$KIMIX_MODEL" "${CODEX_ARGS[@]}" "$@")
 fi
 
-# Interactive use (a real TTY, or KIMIX_STDIN=1 piping a prompt in
-# deliberately) keeps the direct `exec` process-replacement — codex owns the
-# terminal, streams live, and this script must not sit in the way. Automation
-# calls (non-tty stdin: CI, a background job, an agent harness — which is
-# every caller that hit the silent-truncation bug this file exists to fix)
-# instead run codex as a child so the output can be inspected: codex's own
-# lifecycle, even with the limits above, has been observed to swallow a
-# context-exhaustion failure and still exit 0 — the exact "ran the task
-# apparently to completion but did nothing" failure that makes an automated
-# caller trust a false success. Grep the captured output for the known
-# upstream phrasing and force a real failure exit when it's there.
+# Preserve interactive terminal ownership. In automation, inspect Codex's
+# combined output because some Codex versions have reported context exhaustion
+# while still returning exit status 0.
 if (( ! AUTOMATION )); then
   exec "${CODEX_ARGS[@]}"
 fi
 
 OUTPUT_FILE="$(mktemp)"
 trap 'rm -f "$OUTPUT_FILE"' EXIT
-# Merge stderr into the same stream so one `tee` sees everything (two
-# processes teeing to one file would race); PIPESTATUS[0] recovers codex's
-# real exit code from the left side of the pipe, and `set -e` is suspended
-# around the pipeline itself so a non-zero codex exit doesn't abort this
-# script before that code is captured.
 set +e
 "${CODEX_ARGS[@]}" 2>&1 | tee "$OUTPUT_FILE"
 CODEX_EXIT="${PIPESTATUS[0]}"
 set -e
 
-if grep -qiE 'ran out of room|context window|context_length_exceeded|maximum context length' "$OUTPUT_FILE"; then
+if rg -qi 'ran out of room|context window|context_length_exceeded|maximum context length' "$OUTPUT_FILE"; then
   echo "kimix: codex reported a context-window failure but may have exited 0 — treating this run as failed." >&2
   exit 1
 fi

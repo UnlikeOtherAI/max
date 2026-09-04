@@ -20,14 +20,10 @@ echo "Installing klaude (Kimi/Claude Code)..."
 curl -fsSL "https://raw.githubusercontent.com/UnlikeOtherAI/max/main/klaude" -o "$INSTALL_DIR/klaude"
 chmod +x "$INSTALL_DIR/klaude"
 
-# Install kimix (Kimi K2 via Codex + proxy)
-echo "Installing kimix (Kimi K2/Codex)..."
+# Install kimix (Kimi K3 via Codex's native Responses API)
+echo "Installing kimix (Kimi K3/Codex)..."
 curl -fsSL "https://raw.githubusercontent.com/UnlikeOtherAI/max/main/kimix" -o "$INSTALL_DIR/kimix"
 chmod +x "$INSTALL_DIR/kimix"
-curl -fsSL "https://raw.githubusercontent.com/UnlikeOtherAI/max/main/kimix-proxy" -o "$INSTALL_DIR/kimix-proxy"
-chmod +x "$INSTALL_DIR/kimix-proxy"
-# Model catalog — kimix reads it from alongside the kimix script
-curl -fsSL "https://raw.githubusercontent.com/UnlikeOtherAI/max/main/k3-catalog.json" -o "$INSTALL_DIR/k3-catalog.json"
 
 echo "Done. Run 'max --help', 'glm --help', 'klaude --help', or 'kimix --help' to get started."
 echo ""
@@ -35,6 +31,5 @@ echo "Set your API keys:"
 echo "  export MINIMAX_API_KEY=your_key          # for max"
 echo "  export ZAI_CODING_PLAN_API_KEY=your_key  # for glm"
 echo "  export KIMI_CODING_API_KEY=your_key      # for klaude"
-echo "  export KIMIX_API_KEY=your_key            # for kimix (or save to ~/.kimix/token)"
+echo "  export KIMI_API_KEY=your_key             # for kimix (or save to ~/.kimix/token)"
 echo ""
-echo "NOTE: kimix also requires Python 3 venv setup — see README for details."
