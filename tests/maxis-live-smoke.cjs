@@ -24,7 +24,7 @@ async function main() {
   const installed = process.env.MAXIS_INSTALLED_SCRIPT || path.join(os.homedir(), '.local', 'bin',
     process.platform === 'win32' ? 'maxis.cjs' : 'maxis');
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'maxis-live-'));
-  const profiles = path.join(os.homedir(), '.maxis', 'live-evals');
+  const profiles = path.resolve(process.env.MAXIS_LIVE_PROFILE_ROOT || path.join(os.homedir(), '.maxis', 'live-evals'));
   fs.mkdirSync(profiles, { recursive: true });
   const profile = fs.mkdtempSync(path.join(profiles, 'run-'));
   const env = { ...process.env, MAXIS_HOME: profile, MAXIS_CODEX_HOME: path.join(profile, 'codex') };
