@@ -67,7 +67,7 @@ function validateArgs(args) {
 
 function resolveCodex(env = process.env) {
   const candidates = env.MAXIS_CODEX_BIN ? [path.resolve(env.MAXIS_CODEX_BIN)] :
-    (env.PATH || '').split(path.delimiter).flatMap(dir =>
+    (env.PATH || '').split(path.delimiter).filter(Boolean).flatMap(dir =>
       process.platform === 'win32' ? [path.join(dir, 'codex.exe'), path.join(dir, 'codex.cmd')] : [path.join(dir, 'codex')]);
   for (const candidate of candidates) {
     if (!fs.existsSync(candidate) || !fs.statSync(candidate).isFile()) continue;

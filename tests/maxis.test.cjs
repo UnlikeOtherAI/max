@@ -17,7 +17,9 @@ async function fixture(t) {
   const server = http.createServer((req, res) => {
     if (req.url === '/health') {
       res.setHeader('Content-Type', 'application/json');
-      return res.end(JSON.stringify(state.health));
+      res.end(JSON.stringify(state.health));
+      state.afterHealth?.();
+      return;
     }
     let body = '';
     req.setEncoding('utf8');
@@ -193,5 +195,44 @@ test('an auxiliary model request cannot bypass the selected model', async t => {
     body: JSON.stringify({ model: 'cloud-helper', input: 'hello' }) });
   assert.equal(response.status, 400);
   assert.equal((await response.json()).error.code, 'maxis_model_override');
+  assert.equal(state.requests.length, 0);
+});
+
+test('chunked clients become bounded length-delimited requests for the LAN proxy', async t => {
+  const { state, base } = await fixture(t);
+  const proxy = await guardedProxy(base, await selection(base));
+  t.after(() => proxy.close());
+  const body = JSON.stringify({ model: 'qwen-active', input: 'chunked input' });
+  await new Promise((resolve, reject) => {
+    const request = http.request(proxy.url + '/responses', { method: 'POST' }, response => {
+      response.resume();
+      response.on('end', resolve);
+    });
+    request.on('error', reject);
+    request.write(body.slice(0, 10));
+    request.end(body.slice(10));
+  });
+  assert.equal(state.requests[0].body, body);
+  assert.equal(Number(state.requests[0].headers['content-length']), Buffer.byteLength(body));
+  assert.equal(state.requests[0].headers['transfer-encoding'], undefined);
+});
+
+test('a stale session fails even if its Codex child reports success', async t => {
+  const { state, base } = await fixture(t);
+  state.afterHealth = () => { state.health.max_context = 32768; };
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'maxis stale '));
+  t.after(() => fs.rmSync(scratch, { recursive: true }));
+  const stub = path.join(scratch, 'codex.cjs');
+  fs.writeFileSync(stub, [
+    "if(process.argv.includes('--version')){console.log('codex-cli 0.166.0');process.exit(0)}",
+    "const args=process.argv.slice(2);const setting=args.find(x=>x.startsWith('model_providers.maxis.base_url='));",
+    "const url=JSON.parse(setting.slice(setting.indexOf('=')+1));",
+    "fetch(url+'/responses',{method:'POST',body:JSON.stringify({model:'qwen-active',input:'hello'})}).then(r=>r.text()).then(()=>process.exit(0));",
+  ].join('\n'));
+  const result = await run(path.join(__dirname, '..', 'maxis'), ['exec', 'hello'], {
+    MAXIS_STRATA_URL: base, MAXIS_CODEX_BIN: stub, MAXIS_HOME: path.join(scratch, 'home'),
+    CODEX_HOME: path.join(scratch, 'normal'),
+  });
+  assert.equal(result.code, 1, result.stderr);
   assert.equal(state.requests.length, 0);
 });
