@@ -206,3 +206,9 @@ Run the regression checks with `npm run test:maxis`. After installation,
 `node tests/maxis-live-smoke.cjs` verifies a real Codex tool read and file write
 through the active model. It creates an isolated scratch directory and retains
 its evidence; it does not edit a repository.
+
+Codex 0.166.0 can still print a fallback-metadata notice for its built-in
+review model (\`gpt-5.6-luna\`). This is not the selected inference model:
+\`maxis\` advertises the loaded Strata model and refuses inference requests
+for any other model. The installed read/write tool flows were verified on
+Maxis, Minis and the Mac.
