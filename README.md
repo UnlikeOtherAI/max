@@ -32,7 +32,8 @@ curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/max -o ~/bin
 curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/glm -o ~/bin/glm
 curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/klaude -o ~/bin/klaude
 curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/kimix -o ~/bin/kimix
-chmod +x ~/bin/max ~/bin/glm ~/bin/klaude ~/bin/kimix
+curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/maxis -o ~/bin/maxis
+chmod +x ~/bin/max ~/bin/glm ~/bin/klaude ~/bin/kimix ~/bin/maxis
 ```
 
 Ensure `~/bin` is in your `$PATH`.
@@ -189,7 +190,7 @@ A session checks the model, context and image capability before each request.
 If the desktop selection changes, the request fails with a restart instruction.
 Restart `maxis` (or resume it) to adopt the new selection and budget. It does
 not silently reuse a 1M budget after a switch to 256K. Model, provider, profile
-and context overrides are refused; ordinary Codex arguments pass through.
+and context overrides are refused, including requests for auxiliary cloud models; ordinary Codex arguments pass through.
 
 Sessions and configuration are isolated in `~/.maxis/codex` (override with
 `MAXIS_CODEX_HOME` or relocate the whole wrapper state with `MAXIS_HOME`).
@@ -197,7 +198,7 @@ The first run creates the same full-access defaults used by `kimix`;
 subsequent runs preserve that configuration. Reasoning defaults to `none`,
 and normal Codex reasoning/sandbox flags remain available. The normal Codex
 global `AGENTS.md` is copied on launch so its instructions still apply;
-OpenAI/Kimi credentials are not copied. `MAXIS_CODEX_BIN` can select a Codex
+OpenAI/Kimi authentication files are not copied; the Strata and OpenAI API key variables are removed from the Codex child environment. `MAXIS_CODEX_BIN` can select a Codex
 executable explicitly. Installed Windows npm and simple native-binary shims
 are resolved directly so arguments never pass through a shell.
 

@@ -23,7 +23,7 @@
   "author": "Unlike Other AI",
   "license": "MIT",
   "engines": {
-    "node": ">=18"
+    "node": ">=18.17"
   },
   "files": [
     "max",
