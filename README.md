@@ -5,6 +5,7 @@ CLI wrappers that route Claude Code / Codex through multiple API-compatible endp
 - **max** - [MiniMax API](https://www.minimaxi.com) — routes Claude Code via Anthropic-compatible API
 - **glm** - [Z.ai GLM](https://z.ai) — routes Claude Code via Anthropic-compatible API
 - **klaude** - [Moonshot AI Kimi](https://www.moonshot.cn) — routes Claude Code via Anthropic-compatible API
+- **maxis** - the currently loaded Strata model — runs Codex with the actual model/context
 - **kimix** - [Kimi K3](https://platform.kimi.ai/docs/guide/codex-kimi) (`kimi-k3`) — connects Codex CLI directly to Kimi's native Responses API
 
 Use Claude Code or Codex with your preferred provider without modifying configuration each time.
@@ -26,7 +27,7 @@ curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/install.sh |
 Or manually:
 
 ```bash
-# Install all four
+# Install all five
 curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/max -o ~/bin/max
 curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/glm -o ~/bin/glm
 curl -fsSL https://raw.githubusercontent.com/UnlikeOtherAI/max/main/klaude -o ~/bin/klaude
@@ -139,3 +140,65 @@ Everything else — conversation history, tool use, etc. — is handled by the r
 ## License
 
 MIT
+
+## Active Strata model with maxis
+
+`maxis` launches Codex against the model currently loaded by the Local Models
+launcher on Maxis. It reads Strata's health API on each launch: the loaded Qwen
+or DeepSeek model and its **configured** context window determine the Codex
+catalog, context budget and automatic compaction threshold. It never starts a
+model or falls back to a cloud provider. The Ollama/Gemma choice is a separate
+backend; select and start a Strata model first.
+
+Requires Node.js 18.17+ and Codex CLI **0.166.0 or newer**. The Codex submodule
+is pinned to the official `rust-v0.166.0` release; a source build is not required.
+
+Install a standalone copy on Windows, macOS or Linux:
+
+```sh
+node install-maxis.cjs
+maxis --status
+maxis "inspect this repository and explain its entry points"
+maxis exec "fix the failing test"
+maxis resume --last
+```
+
+The installer uses `~/.local/bin` by default, or `MAX_INSTALL_DIR`. Windows
+gets a native `maxis.cmd` shim and a JavaScript payload; it does not need Bash.
+The installed copy does not depend on a source worktree. Ensure the installation
+directory is on PATH.
+
+The default endpoint is `http://Maxis.local:8084`. To use another Strata server:
+
+```sh
+MAXIS_STRATA_URL=http://your-host:8084 maxis --status
+```
+
+In PowerShell, set `$env:MAXIS_STRATA_URL` before running `maxis`. A URL ending
+in `/v1` is accepted too. An optional `MAXIS_STRATA_API_KEY` authenticates to
+Strata; it is kept out of Codex's child environment and derived configuration.
+
+`maxis --status` reports the actual model, window, compaction threshold and
+Codex version. A 262,144-position window compacts at 209,715 tokens; a 32,768
+window compacts at 24,576. Larger windows reserve 20% for estimation differences,
+instructions, tool results and output. Codex's usable-window margin is also
+retained. The stream idle timeout is one hour for slow long-context prefills;
+this does not make those prefills faster.
+
+A session checks the model, context and image capability before each request.
+If the desktop selection changes, the request fails with a restart instruction.
+Restart `maxis` (or resume it) to adopt the new selection and budget. It does
+not silently reuse a 1M budget after a switch to 256K. Model, provider, profile
+and context overrides are refused; ordinary Codex arguments pass through.
+
+Sessions and configuration are isolated in `~/.maxis/codex` (override with
+`MAXIS_CODEX_HOME` or relocate the whole wrapper state with `MAXIS_HOME`).
+The first run creates the same full-access defaults used by `kimix`;
+subsequent runs preserve that configuration. Reasoning defaults to `none`,
+and normal Codex reasoning/sandbox flags remain available. The normal Codex
+global `AGENTS.md` is copied on launch so its instructions still apply;
+OpenAI/Kimi credentials are not copied. `MAXIS_CODEX_BIN` can select a Codex
+executable explicitly. Installed Windows npm and simple native-binary shims
+are resolved directly so arguments never pass through a shell.
+
+Run the regression checks with `npm run test:maxis`.

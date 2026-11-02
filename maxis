@@ -1,0 +1,275 @@
+#!/usr/bin/env node
+'use strict';
+// Codex against the currently loaded Strata model. No model is started here.
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const http = require('node:http');
+const https = require('node:https');
+const { spawn, spawnSync } = require('node:child_process');
+const { randomUUID } = require('node:crypto');
+
+const VERSION = '1.1.0';
+const DEFAULT_URL = 'http://Maxis.local:8084';
+const INSTRUCTIONS = 'You are Codex, a coding agent working in the user workspace. Follow AGENTS.md, inspect code before changing it, use the available tools, and verify changes. Report only work you actually performed.';
+
+function endpoint(value) {
+  const url = new URL(value || DEFAULT_URL);
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+    throw new Error('MAXIS_STRATA_URL must be an HTTP(S) URL without credentials, query or fragment.');
+  }
+  url.pathname = url.pathname.replace(/\/v1\/?$/, '').replace(/\/$/, '');
+  return url.href.replace(/\/$/, '');
+}
+
+function limits(context) {
+  if (!Number.isSafeInteger(context) || context < 1024) throw new Error('Strata did not report a valid max_context.');
+  const reserve = Math.max(512, Math.min(8192, Math.floor(context / 4)), Math.ceil(context * 0.20));
+  return { context, compact: context - reserve };
+}
+
+async function selection(base, key) {
+  let response;
+  try {
+    response = await fetch(base + '/health', {
+      headers: key ? { Authorization: 'Bearer ' + key } : {},
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch (error) {
+    throw new Error('Cannot reach Strata at ' + base + '. Start a Strata model in Local Models. ' + error.message);
+  }
+  if (!response.ok) throw new Error('Strata health returned HTTP ' + response.status + '. Start a Strata model in Local Models.');
+  const health = await response.json();
+  if (health.service !== 'strata' || health.loaded !== true || typeof health.model !== 'string' || !health.model.trim()) {
+    throw new Error('No Strata model is ready. Start Qwen or DeepSeek in Local Models; the Ollama/Gemma choice is a separate backend.');
+  }
+  return { model: health.model, images: health.images === true, ...limits(health.max_context) };
+}
+
+function validateArgs(args) {
+  const protectedKey = /^(model|model_provider|model_context_window|model_auto_compact_token_limit|model_catalog_json|model_providers|profiles)(\.|$)/;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--') break;
+    if (/^(--model|--profile|--local-provider|--oss)(=|$)/.test(arg) || /^-[mp]/.test(arg)) {
+      throw new Error('maxis selects the active Strata model/provider. Model, profile and --oss overrides are not supported.');
+    }
+    let setting;
+    if (arg === '-c' || arg === '--config') setting = args[++i];
+    else if (arg.startsWith('--config=')) setting = arg.slice(9);
+    else if (arg.startsWith('-c') && arg.length > 2) setting = arg.slice(2);
+    if (setting !== undefined) {
+      const key = setting.split('=', 1)[0].replace(/["'\s]/g, '');
+      if (protectedKey.test(key)) throw new Error('maxis manages ' + key + ' from Strata; remove that override.');
+    }
+  }
+}
+
+function resolveCodex(env = process.env) {
+  const candidates = env.MAXIS_CODEX_BIN ? [path.resolve(env.MAXIS_CODEX_BIN)] :
+    (env.PATH || '').split(path.delimiter).flatMap(dir =>
+      process.platform === 'win32' ? [path.join(dir, 'codex.exe'), path.join(dir, 'codex.cmd')] : [path.join(dir, 'codex')]);
+  for (const candidate of candidates) {
+    if (!fs.existsSync(candidate) || !fs.statSync(candidate).isFile()) continue;
+    if (/\.(c?js|mjs)$/i.test(candidate)) return { file: process.execPath, prefix: [candidate] };
+    if (candidate.toLowerCase().endsWith('.cmd')) {
+      // npm's official shim: launch its JS entry directly, never through a shell.
+      const npmEntry = path.join(path.dirname(candidate), 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+      if (fs.existsSync(npmEntry)) return { file: process.execPath, prefix: [npmEntry] };
+      // A simple user/winget shim may point at the official native executable.
+      const match = fs.readFileSync(candidate, 'utf8').match(/^\s*@?"([^"\r\n]+\.exe)"\s+%\*\s*$/im);
+      if (match && fs.existsSync(match[1])) return { file: match[1], prefix: [] };
+      throw new Error('Cannot resolve the codex.cmd shim. Set MAXIS_CODEX_BIN to the native Codex executable.');
+    }
+    return { file: candidate, prefix: [] };
+  }
+  throw new Error('Codex CLI was not found. Install/update @openai/codex or set MAXIS_CODEX_BIN.');
+}
+
+function codexVersion(command) {
+  const result = spawnSync(command.file, [...command.prefix, '--version'], { encoding: 'utf8', windowsHide: true });
+  if (result.error || result.status !== 0) throw new Error('Cannot run Codex CLI: ' + (result.error?.message || result.stderr));
+  const match = result.stdout.match(/codex-cli (\d+)\.(\d+)\.(\d+)/);
+  if (!match || (Number(match[1]) === 0 && Number(match[2]) < 166)) {
+    throw new Error('maxis requires Codex CLI 0.166.0 or newer. Found: ' + result.stdout.trim());
+  }
+  return result.stdout.trim();
+}
+
+function catalog(active) {
+  return { models: [{
+    slug: active.model, display_name: active.model, description: 'Currently loaded Strata model',
+    default_reasoning_level: 'none',
+    supported_reasoning_levels: ['none', 'low', 'medium', 'high'].map(effort => ({ effort, description: effort })),
+    shell_type: 'unified_exec', visibility: 'list', supported_in_api: true, priority: 0,
+    availability_nux: null, upgrade: null, base_instructions: INSTRUCTIONS,
+    include_skills_usage_instructions: false, include_plugin_usage_instructions: false,
+    include_apps_usage_instructions: false, supports_reasoning_summary_parameter: false,
+    support_verbosity: false, default_verbosity: null, apply_patch_tool_type: null,
+    truncation_policy: { mode: 'bytes', limit: 10000 },
+    context_window: active.context, max_context_window: active.context,
+    auto_compact_token_limit: active.compact, effective_context_window_percent: 95,
+    experimental_supported_tools: [], input_modalities: active.images ? ['text', 'image'] : ['text'],
+  }] };
+}
+
+function sameSelection(a, b) {
+  return a.model === b.model && a.context === b.context && a.images === b.images;
+}
+
+function errorResponse(res, status, message, code) {
+  if (res.headersSent) { res.destroy(); return; }
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: { message, type: code, code } }));
+}
+
+const HOP = new Set(['host', 'connection', 'keep-alive', 'transfer-encoding', 'content-length', 'upgrade',
+  'proxy-authorization', 'proxy-authenticate', 'authorization', 'cookie', 'set-cookie']);
+
+async function guardedProxy(base, initial, key) {
+  const inflight = new Set();
+  let changed = false;
+  const server = http.createServer(async (req, res) => {
+    if (req.headers.origin) return errorResponse(res, 403, 'API clients only.', 'maxis_origin');
+    if (!['GET', 'POST'].includes(req.method) ||
+        !['/v1/models', '/v1/responses', '/v1/responses/compact'].includes(req.url)) {
+      return errorResponse(res, 404, 'Unsupported inference path.', 'maxis_path');
+    }
+    try {
+      const current = await selection(base, key);
+      if (!sameSelection(initial, current)) {
+        changed = true;
+        return errorResponse(res, 409,
+          'Strata selection changed to ' + current.model + ' (' + current.context +
+          ' context). Restart maxis to use the new model and correct context budget.', 'maxis_selection_changed');
+      }
+      const target = new URL(base + req.url);
+      const headers = Object.fromEntries(Object.entries(req.headers).filter(([name]) => !HOP.has(name.toLowerCase())));
+      if (key) headers.authorization = 'Bearer ' + key;
+      const transport = target.protocol === 'https:' ? https : http;
+      const upstream = transport.request(target, { method: req.method, headers }, response => {
+        const outgoing = Object.fromEntries(Object.entries(response.headers).filter(([name]) => !HOP.has(name.toLowerCase())));
+        res.writeHead(response.statusCode, outgoing);
+        response.on('error', () => res.destroy());
+        response.pipe(res);
+      });
+      inflight.add(upstream);
+      upstream.setTimeout(3600000, () => upstream.destroy(new Error('Strata inference stream was idle for one hour.')));
+      upstream.on('close', () => inflight.delete(upstream));
+      upstream.on('error', error => errorResponse(res, 502, error.message, 'maxis_upstream'));
+      req.on('aborted', () => upstream.destroy());
+      res.on('close', () => { if (!res.writableEnded) upstream.destroy(); });
+      req.pipe(upstream);
+    } catch (error) {
+      errorResponse(res, 503, error.message, 'maxis_not_ready');
+    }
+  });
+  server.requestTimeout = 0;
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  return {
+    url: 'http://127.0.0.1:' + server.address().port + '/v1',
+    changed: () => changed,
+    close: () => {
+      for (const request of inflight) request.destroy();
+      server.closeAllConnections();
+      return new Promise(resolve => server.close(resolve));
+    },
+  };
+}
+
+function forcedArgs(active, catalogPath, proxyUrl) {
+  const settings = {
+    model_provider: 'maxis',
+    model_context_window: active.context,
+    model_auto_compact_token_limit: active.compact,
+    model_catalog_json: catalogPath,
+    model_supports_reasoning_summaries: false,
+    'model_providers.maxis.name': 'Strata',
+    'model_providers.maxis.base_url': proxyUrl,
+    'model_providers.maxis.wire_api': 'responses',
+    'model_providers.maxis.requires_openai_auth': false,
+    'model_providers.maxis.supports_websockets': false,
+    'model_providers.maxis.stream_idle_timeout_ms': 3600000,
+    'model_providers.maxis.request_max_retries': 0,
+    'model_providers.maxis.stream_max_retries': 0,
+  };
+  return ['--model', active.model, ...Object.entries(settings).flatMap(([key, value]) => ['-c', key + '=' + JSON.stringify(value)])];
+}
+
+async function main(args = process.argv.slice(2)) {
+  if (args.length === 1 && ['--help', '-h'].includes(args[0])) {
+    console.log('maxis ' + VERSION + ' — Codex using the active Strata selection\n' +
+      'Usage: maxis [Codex arguments]\n       maxis --status\n       maxis --version\n' +
+      'MAXIS_STRATA_URL defaults to ' + DEFAULT_URL + '. Optional MAXIS_STRATA_API_KEY stays in this process.\n' +
+      'A model/context change during a session is rejected; restart maxis to adopt it.\n' +
+      'Model/provider/context overrides are refused. Other Codex options pass through.');
+    return 0;
+  }
+  validateArgs(args);
+  const command = resolveCodex();
+  const version = codexVersion(command);
+  if (args.length === 1 && args[0] === '--version') { console.log('maxis ' + VERSION + '\n' + version); return 0; }
+  const base = endpoint(process.env.MAXIS_STRATA_URL);
+  const active = await selection(base, process.env.MAXIS_STRATA_API_KEY);
+  if (args.length === 1 && args[0] === '--status') {
+    console.log(JSON.stringify({ endpoint: base, ...active, codex: version }, null, 2));
+    return 0;
+  }
+  const home = path.resolve(process.env.MAXIS_HOME || path.join(os.homedir(), '.maxis'));
+  const codexHome = path.resolve(process.env.MAXIS_CODEX_HOME || path.join(home, 'codex'));
+  const runtime = path.join(home, 'runtime');
+  fs.mkdirSync(codexHome, { recursive: true, mode: 0o700 });
+  fs.mkdirSync(runtime, { recursive: true, mode: 0o700 });
+  // Managed, isolated configuration: no OpenAI/Kimi credentials or stale provider catalog.
+  try {
+    fs.writeFileSync(path.join(codexHome, 'config.toml'),
+      'model_reasoning_effort = "none"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n', { flag: 'wx', mode: 0o600 });
+  } catch (error) { if (error.code !== 'EEXIST') throw error; }
+  const globalAgents = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'AGENTS.md');
+  if (fs.existsSync(globalAgents) && path.resolve(globalAgents) !== path.join(codexHome, 'AGENTS.md')) {
+    const temporary = path.join(codexHome, '.agents-' + randomUUID());
+    fs.copyFileSync(globalAgents, temporary);
+    fs.renameSync(temporary, path.join(codexHome, 'AGENTS.md'));
+  }
+  const runDir = fs.mkdtempSync(path.join(runtime, 'run-'));
+  const catalogPath = path.join(runDir, 'models.json');
+  fs.writeFileSync(catalogPath, JSON.stringify(catalog(active)), { mode: 0o600 });
+  let proxy;
+  try {
+    proxy = await guardedProxy(base, active, process.env.MAXIS_STRATA_API_KEY);
+    const env = { ...process.env, CODEX_HOME: codexHome };
+    delete env.MAXIS_STRATA_API_KEY;
+    delete env.OPENAI_API_KEY;
+    delete env.OPENAI_BASE_URL;
+    console.error('maxis: ' + active.model + '; context ' + active.context + ', compact at ' + active.compact + '; ' + base);
+    const child = spawn(command.file, [...command.prefix, ...forcedArgs(active, catalogPath, proxy.url), ...args], {
+      env, stdio: 'inherit', windowsHide: true,
+    });
+    // The child owns the inherited terminal and receives Ctrl-C itself. Keep the guard alive
+    // while Codex handles an interrupted turn instead of killing its whole session.
+    const interrupt = () => {};
+    const terminate = () => child.kill('SIGTERM');
+    process.on('SIGINT', interrupt);
+    process.on('SIGTERM', terminate);
+    try {
+      const status = await new Promise((resolve, reject) => {
+        child.once('error', reject);
+        child.once('exit', (code, signal) => resolve(code ?? (signal ? 130 : 1)));
+      });
+      return proxy.changed() && status === 0 ? 1 : status;
+    } finally {
+      process.off('SIGINT', interrupt);
+      process.off('SIGTERM', terminate);
+    }
+  } finally {
+    if (proxy) await proxy.close();
+    if (!runDir.startsWith(runtime + path.sep)) throw new Error('Invalid owned runtime directory.');
+    fs.rmSync(runDir, { recursive: true });
+  }
+}
+
+module.exports = { endpoint, limits, selection, validateArgs, resolveCodex, catalog, sameSelection, guardedProxy, forcedArgs, main };
+if (require.main === module) main().then(code => { process.exitCode = code; }).catch(error => {
+  console.error('maxis: ' + error.message);
+  process.exitCode = 1;
+});

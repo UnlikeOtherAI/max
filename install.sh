@@ -3,6 +3,7 @@ set -e
 
 INSTALL_DIR="${MAX_INSTALL_DIR:-$HOME/bin}"
 
+mkdir -p "$INSTALL_DIR"
 echo "Installing Max CLI wrappers to $INSTALL_DIR ..."
 
 # Install max (MiniMax)
@@ -25,7 +26,11 @@ echo "Installing kimix (Kimi K3/Codex)..."
 curl -fsSL "https://raw.githubusercontent.com/UnlikeOtherAI/max/main/kimix" -o "$INSTALL_DIR/kimix"
 chmod +x "$INSTALL_DIR/kimix"
 
-echo "Done. Run 'max --help', 'glm --help', 'klaude --help', or 'kimix --help' to get started."
+echo "Installing maxis (active Strata/Codex)..."
+curl -fsSL "https://raw.githubusercontent.com/UnlikeOtherAI/max/main/maxis" -o "$INSTALL_DIR/maxis"
+chmod +x "$INSTALL_DIR/maxis"
+
+echo "Done. Run 'max --help', 'glm --help', 'klaude --help', 'kimix --help', or 'maxis --help' to get started."
 echo ""
 echo "Set your API keys:"
 echo "  export MINIMAX_API_KEY=your_key          # for max"
