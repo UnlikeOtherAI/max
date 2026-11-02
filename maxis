@@ -136,6 +136,16 @@ async function guardedProxy(base, initial, key) {
       return errorResponse(res, 404, 'Unsupported inference path.', 'maxis_path');
     }
     try {
+      const chunks = [];
+      let bytes = 0;
+      for await (const chunk of req) {
+        bytes += chunk.length;
+        if (bytes > 32 * 1024 * 1024) {
+          return errorResponse(res, 413, 'Request exceeds the Strata LAN API 32 MiB limit.', 'maxis_payload_limit');
+        }
+        chunks.push(chunk);
+      }
+      const body = Buffer.concat(chunks);
       const current = await selection(base, key);
       if (!sameSelection(initial, current)) {
         changed = true;
@@ -145,6 +155,7 @@ async function guardedProxy(base, initial, key) {
       }
       const target = new URL(base + req.url);
       const headers = Object.fromEntries(Object.entries(req.headers).filter(([name]) => !HOP.has(name.toLowerCase())));
+      headers['content-length'] = String(body.length);
       if (key) headers.authorization = 'Bearer ' + key;
       const transport = target.protocol === 'https:' ? https : http;
       const upstream = transport.request(target, { method: req.method, headers }, response => {
@@ -159,7 +170,7 @@ async function guardedProxy(base, initial, key) {
       upstream.on('error', error => errorResponse(res, 502, error.message, 'maxis_upstream'));
       req.on('aborted', () => upstream.destroy());
       res.on('close', () => { if (!res.writableEnded) upstream.destroy(); });
-      req.pipe(upstream);
+      upstream.end(body);
     } catch (error) {
       errorResponse(res, 503, error.message, 'maxis_not_ready');
     }
@@ -183,7 +194,10 @@ function forcedArgs(active, catalogPath, proxyUrl) {
     model_context_window: active.context,
     model_auto_compact_token_limit: active.compact,
     model_catalog_json: catalogPath,
-    model_supports_reasoning_summaries: false,
+    'features.apps': false,
+    'features.plugins': false,
+    'features.remote_plugin': false,
+    'features.plugin_discovery_prefetch': false,
     'model_providers.maxis.name': 'Strata',
     'model_providers.maxis.base_url': proxyUrl,
     'model_providers.maxis.wire_api': 'responses',

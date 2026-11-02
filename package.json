@@ -24,5 +24,15 @@
   "license": "MIT",
   "engines": {
     "node": ">=18"
-  }
+  },
+  "files": [
+    "max",
+    "glm",
+    "klaude",
+    "kimix",
+    "maxis",
+    "install-maxis.cjs",
+    "README.md",
+    "LICENSE"
+  ]
 }

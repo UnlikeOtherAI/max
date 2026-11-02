@@ -95,6 +95,7 @@ test('SSE is forwarded unchanged and client credentials are not forwarded', asyn
   assert.equal(state.requests.length, 1);
   assert.equal(state.requests[0].headers.authorization, undefined);
   assert.equal(state.requests[0].path, '/v1/responses');
+  assert.equal(Number(state.requests[0].headers['content-length']), Buffer.byteLength(state.requests[0].body));
 });
 
 test('only the explicitly configured Strata key reaches its endpoint', async t => {
