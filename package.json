@@ -1,12 +1,14 @@
 {
   "name": "minimax-claude-cli",
-  "version": "1.0.1",
-  "description": "A CLI wrapper for Claude Code via MiniMax API",
+  "version": "1.1.0",
+  "description": "CLI wrappers for Claude Code and Codex, including active Strata model selection",
   "bin": {
-    "max": "./max"
+    "max": "./max",
+    "maxis": "./maxis"
   },
   "scripts": {
-    "postinstall": "chmod +x ./max"
+    "postinstall": "node -e \"for (const name of ['max','maxis']) require('node:fs').chmodSync(name, 0o755)\"",
+    "test:maxis": "node --test tests/maxis.test.cjs"
   },
   "repository": {
     "type": "git",
@@ -21,6 +23,16 @@
   "author": "Unlike Other AI",
   "license": "MIT",
   "engines": {
-    "node": ">=18"
-  }
+    "node": ">=18.17"
+  },
+  "files": [
+    "max",
+    "glm",
+    "klaude",
+    "kimix",
+    "maxis",
+    "install-maxis.cjs",
+    "README.md",
+    "LICENSE"
+  ]
 }
