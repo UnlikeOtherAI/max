@@ -99,7 +99,7 @@ function codexVersion(command) {
 function catalog(active) {
   return { models: [{
     slug: active.model, display_name: active.model, description: 'Currently loaded Strata model',
-    default_reasoning_level: 'none',
+    default_reasoning_level: 'none', auto_review_model_override: active.model,
     supported_reasoning_levels: ['none', 'low', 'medium', 'high'].map(effort => ({ effort, description: effort })),
     shell_type: 'unified_exec', visibility: 'list', supported_in_api: true, priority: 0,
     availability_nux: null, upgrade: null, base_instructions: INSTRUCTIONS,
@@ -146,6 +146,14 @@ async function guardedProxy(base, initial, key) {
         chunks.push(chunk);
       }
       const body = Buffer.concat(chunks);
+      if (req.method === 'POST') {
+        let payload;
+        try { payload = JSON.parse(body.toString('utf8')); }
+        catch { return errorResponse(res, 400, 'Codex must send JSON inference requests.', 'maxis_json'); }
+        if (payload.model !== undefined && payload.model !== initial.model) {
+          return errorResponse(res, 400, 'maxis only permits the active Strata model: ' + initial.model, 'maxis_model_override');
+        }
+      }
       const current = await selection(base, key);
       if (!sameSelection(initial, current)) {
         changed = true;

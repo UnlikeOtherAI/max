@@ -184,3 +184,14 @@ test('installer creates a standalone command in a path with spaces', async t => 
     assert.match(fs.readFileSync(path.join(destination, 'maxis.cmd'), 'utf8'), /%~dp0maxis.cjs/);
   }
 });
+
+test('an auxiliary model request cannot bypass the selected model', async t => {
+  const { state, base } = await fixture(t);
+  const proxy = await guardedProxy(base, await selection(base));
+  t.after(() => proxy.close());
+  const response = await fetch(proxy.url + '/responses', { method: 'POST',
+    body: JSON.stringify({ model: 'cloud-helper', input: 'hello' }) });
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).error.code, 'maxis_model_override');
+  assert.equal(state.requests.length, 0);
+});
