@@ -201,4 +201,7 @@ OpenAI/Kimi credentials are not copied. `MAXIS_CODEX_BIN` can select a Codex
 executable explicitly. Installed Windows npm and simple native-binary shims
 are resolved directly so arguments never pass through a shell.
 
-Run the regression checks with `npm run test:maxis`.
+Run the regression checks with `npm run test:maxis`. After installation,
+`node tests/maxis-live-smoke.cjs` verifies a real Codex tool read and file write
+through the active model. It creates an isolated scratch directory and retains
+its evidence; it does not edit a repository.
